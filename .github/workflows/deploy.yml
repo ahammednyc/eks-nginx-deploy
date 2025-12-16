@@ -23,8 +23,8 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4
       with:
         # Reference the SECRET NAMES you defined in GitHub Settings:
-        **aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}**
-        **aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}**
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
     # Optional but recommended debug step
@@ -38,6 +38,7 @@ jobs:
 
     - name: Build and push Docker image
       run: |
+        # Corrected ECR URI path:
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}{{ env.ECR_REPOSITORY }}:latest
         docker build -t $IMAGE_URI .
         docker push $IMAGE_URI
@@ -56,8 +57,7 @@ jobs:
         # Define the image URI again for clarity in this step
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}{{ env.ECR_REPOSITORY }}:latest
 
-        # Note: You still need to ensure your deployment.yaml has the IMAGE_PLACEHOLDER
-        # or adapt this sed command to match how you set up your deployment.yaml
+        # Note: Ensure your deployment.yaml has the IMAGE_PLACEHOLDER
         sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
 
         kubectl apply -f k8s/deployment.yaml --validate=false
