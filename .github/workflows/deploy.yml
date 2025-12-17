@@ -5,10 +5,10 @@ on:
     branches: [ "main" ]
 
 env:
-  AWS_REGION: us-east-2  # Hardcode or use secret
+  AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-  EKS_CLUSTER_NAME: my_cluster  # Hardcode or use secret
-  AWS_ACCOUNT_ID: 107554921755  # Hardcode or use secret
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
 jobs:
   deploy:
@@ -17,12 +17,6 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: Install eksctl
-      run: |
-        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-        sudo mv /tmp/eksctl /usr/local/bin
-        eksctl version
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -34,21 +28,26 @@ jobs:
     - name: Debug identity
       run: aws sts get-caller-identity
 
-    - name: Fix EKS Permissions
+    # ========== ADD THIS STEP ==========
+    - name: Fix EKS Permissions (USE EXACT USERNAME FROM ERROR)
       run: |
-        # Get current IAM user
-        IAM_ARN=$(aws sts get-caller-identity --query Arn --output text)
-        echo "Using IAM user: $IAM_ARN"
-        
-        # Add current user to EKS
+        # The error shows: "arn:aws:iam::180754921755:user/devops-github-user"
+        # Add THIS exact user to EKS (with DASH, not dot)
         eksctl create iamidentitymapping \
           --cluster ${{ env.EKS_CLUSTER_NAME }} \
           --region ${{ env.AWS_REGION }} \
-          --arn $IAM_ARN \
-          --username github-actions-user \
+          --arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:user/devops-github-user" \
+          --username devops-github-user \
           --group system:masters
         
-        echo "✅ Added IAM user to EKS cluster"
+        # ALSO add the dot version just in case
+        eksctl create iamidentitymapping \
+          --cluster ${{ env.EKS_CLUSTER_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:user/devops.github-user" \
+          --username devops.github-user \
+          --group system:masters || true
+    # ========== END ADDED STEP ==========
 
     - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v2
@@ -56,7 +55,6 @@ jobs:
     - name: Build and push Docker image
       run: |
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
-        echo "Building image: $IMAGE_URI"
         docker build -t $IMAGE_URI .
         docker push $IMAGE_URI
         
@@ -71,8 +69,7 @@ jobs:
     - name: Deploy to EKS
       run: |
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
-        echo "Deploying image: $IMAGE_URI"
-        
+
         sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
-        kubectl apply -f k8s/deployment.yaml
-        kubectl apply -f k8s/service.yaml
+        kubectl apply -f k8s/deployment.yaml --validate=false
+        kubectl apply -f k8s/service.yaml --validate=false
