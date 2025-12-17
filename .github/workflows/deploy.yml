@@ -5,11 +5,10 @@ on:
     branches: [ "main" ]
 
 env:
-  # Reference Secret Names defined in GitHub Settings:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_REGION: us-east-2  # Hardcode or use secret
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }} # Needed for ECR URI
+  EKS_CLUSTER_NAME: my_cluster  # Hardcode or use secret
+  AWS_ACCOUNT_ID: 107554921755  # Hardcode or use secret
 
 jobs:
   deploy:
@@ -19,33 +18,50 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Install eksctl
+      run: |
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+        eksctl version
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-         # Reference the SECRET NAMES you defined in GitHub Settings:
          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
          aws-region: ${{ env.AWS_REGION }}
 
-    # Optional but recommended debug step
     - name: Debug identity
       run: aws sts get-caller-identity
 
+    - name: Fix EKS Permissions
+      run: |
+        # Get current IAM user
+        IAM_ARN=$(aws sts get-caller-identity --query Arn --output text)
+        echo "Using IAM user: $IAM_ARN"
+        
+        # Add current user to EKS
+        eksctl create iamidentitymapping \
+          --cluster ${{ env.EKS_CLUSTER_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --arn $IAM_ARN \
+          --username github-actions-user \
+          --group system:masters
+        
+        echo "✅ Added IAM user to EKS cluster"
+
     - name: Login to Amazon ECR
-      # Using the managed ECR Login Action is cleaner
       uses: aws-actions/amazon-ecr-login@v2
-      id: login-ecr # Give this step an ID to reference its outputs later
 
     - name: Build and push Docker image
       run: |
-        # Corrected ECR URI path:
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+        echo "Building image: $IMAGE_URI"
         docker build -t $IMAGE_URI .
         docker push $IMAGE_URI
         
     - name: Update kubeconfig
       run: |
-        # Use env variables correctly defined in the top env: block
         aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
 
     - name: Verify cluster access
@@ -54,12 +70,9 @@ jobs:
 
     - name: Deploy to EKS
       run: |
-        # Define the image URI again for clarity in this step
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
-
-
-        # Note: Ensure your deployment.yaml has the IMAGE_PLACEHOLDER
+        echo "Deploying image: $IMAGE_URI"
+        
         sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
-
-        kubectl apply -f k8s/deployment.yaml --validate=false
-        kubectl apply -f k8s/service.yaml --validate=false
+        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/service.yaml
