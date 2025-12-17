@@ -39,10 +39,10 @@ jobs:
     - name: Build and push Docker image
       run: |
         # Corrected ECR URI path:
-        IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}{{ env.ECR_REPOSITORY }}:latest
+        IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.{{ env.ECR_REPOSITORY }}:latest
         docker build -t $IMAGE_URI .
         docker push $IMAGE_URI
-
+        
     - name: Update kubeconfig
       run: |
         # Use env variables correctly defined in the top env: block
@@ -56,6 +56,7 @@ jobs:
       run: |
         # Define the image URI again for clarity in this step
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}{{ env.ECR_REPOSITORY }}:latest
+
 
         # Note: Ensure your deployment.yaml has the IMAGE_PLACEHOLDER
         sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
