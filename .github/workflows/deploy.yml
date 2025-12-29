@@ -3,7 +3,8 @@ name: Deploy to EKS
 on:
   push:
     branches: [ "main" ]
-  
+  workflow_dispatch:  # Enables manual "Run workflow" button
+
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
@@ -28,26 +29,19 @@ jobs:
     - name: Debug identity
       run: aws sts get-caller-identity
 
-    # ========== ADD THIS STEP ==========
-    - name: Fix EKS Permissions (USE EXACT USERNAME FROM ERROR)
+    - name: Install eksctl
       run: |
-        # The error shows: "arn:aws:iam::180754921755:user/devops-github-user"
-        # Add THIS exact user to EKS (with DASH, not dot)
-        eksctl create iamidentitymapping \
-          --cluster ${{ env.EKS_CLUSTER_NAME }} \
-          --region ${{ env.AWS_REGION }} \
-          --arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:user/devops-github-user" \
-          --username devops-github-user \
-          --group system:masters
-        
-        # ALSO add the dot version just in case
-        eksctl create iamidentitymapping \
-          --cluster ${{ env.EKS_CLUSTER_NAME }} \
-          --region ${{ env.AWS_REGION }} \
-          --arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:user/devops.github-user" \
-          --username devops.github-user \
-          --group system:masters || true
-    # ========== END ADDED STEP ==========
+        ARCH=amd64
+        PLATFORM=$(uname -s)_$ARCH
+        curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_${PLATFORM}.tar.gz"
+        tar -xzf eksctl_${PLATFORM}.tar.gz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+        eksctl version
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v4
+      with:
+        version: 'latest'
 
     - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v2
@@ -57,10 +51,20 @@ jobs:
         IMAGE_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
         docker build -t $IMAGE_URI .
         docker push $IMAGE_URI
-        
+
     - name: Update kubeconfig
       run: |
         aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+    - name: Fix EKS Permissions (USE EXACT USERNAME FROM ERROR)
+      run: |
+        # Add IAM user to EKS cluster with cluster-admin access
+        eksctl create iamidentitymapping \
+          --cluster ${{ env.EKS_CLUSTER_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --arn "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:user/devops-github-user" \
+          --username devops-github-user \
+          --group system:masters || true
 
     - name: Verify cluster access
       run: |
@@ -73,3 +77,6 @@ jobs:
         sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml
         kubectl apply -f k8s/deployment.yaml --validate=false
         kubectl apply -f k8s/service.yaml --validate=false
+        
+        # Verify deployment
+        kubectl rollout status deployment/nginx-deployment -n default --timeout=300s
